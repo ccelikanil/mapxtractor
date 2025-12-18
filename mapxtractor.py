@@ -54,7 +54,7 @@ def print_banner():
                            ░██                                                                                          
                            ░██                                                                                          
                                                                                                                          
-mapxtractor v2.0 | Advanced SourceMap Extractor by Anil Celik (@ccelikanil)
+                       # mapxtractor v1.0 | SourceMap Extractor by Anil Celik (@ccelikanil) #
 """
     print(banner)
 
