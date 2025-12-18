@@ -9,6 +9,7 @@ import re
 import json
 import os
 import sys
+import base64
 
 requests.packages.urllib3.disable_warnings()
 
@@ -31,9 +32,13 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/121.0.0.0 Safari/537.36",
 ]
 
-JS_REGEX = re.compile(r"""["']([^"' ]+\.js(?:\?[^"' ]*)?)["']""", re.I)
+JS_REGEX  = re.compile(r"""["']([^"' ]+\.js(?:\?[^"' ]*)?)["']""", re.I)
+CSS_REGEX = re.compile(r"""["']([^"' ]+\.css(?:\?[^"' ]*)?)["']""", re.I)
 
 SOURCEMAP_LOG = "sourcemaps.txt"
+
+SOURCEMAP_COMMENT_RE = re.compile(r"sourceMappingURL\s*=\s*(.+)$", re.I)
+INLINE_MAP_RE = re.compile(r"data:application/json;base64,(.+)", re.I)
 
 # ================= BANNER =================
 
@@ -49,7 +54,7 @@ def print_banner():
                            ░██                                                                                          
                            ░██                                                                                          
                                                                                                                          
-                        # mapxtractor v1.0 | SourceMap Extractor by Anil Celik (@ccelikanil) #
+mapxtractor v2.0 | Advanced SourceMap Extractor by Anil Celik (@ccelikanil)
 """
     print(banner)
 
@@ -83,6 +88,15 @@ def fetch(session, url, timeout, rate):
         print(f"{RED}[-] Request failed: {url}{RESET}")
         return None
 
+def sanitize_path(p):
+    # Prevent traversal / weird Windows paths
+    p = p.replace("\\", "/")
+    p = os.path.normpath(p)
+    p = p.lstrip("/").replace("..", "")
+    # Drop drive-letter patterns like C:
+    p = p.replace(":", "")
+    return p
+
 # ================= SOURCEMAP =================
 
 def valid_sourcemap(resp):
@@ -103,12 +117,25 @@ def valid_sourcemap(resp):
         and len(data.get("sources")) > 0
     )
 
+def valid_sourcemap_data(data):
+    return (
+        isinstance(data, dict)
+        and data.get("version") == 3
+        and isinstance(data.get("mappings"), str)
+        and len(data.get("mappings")) > 10
+        and isinstance(data.get("sources"), list)
+        and len(data.get("sources")) > 0
+    )
+
 def log_sourcemap(url):
     with open(SOURCEMAP_LOG, "a", encoding="utf-8") as f:
         f.write(url + "\n")
 
 def dump_sources(resp, map_url, host):
     data = resp.json()
+    dump_sources_data(data, map_url, host)
+
+def dump_sources_data(data, map_id, host):
     sources = data.get("sources", [])
     contents = data.get("sourcesContent")
 
@@ -119,13 +146,14 @@ def dump_sources(resp, map_url, host):
     base = os.path.join(
         "sourcemaps",
         host,
-        map_url.replace("://", "_").replace("/", "_")
+        map_id.replace("://", "_").replace("/", "_")
     )
 
     for src, content in zip(sources, contents):
         if not content:
             continue
-        path = os.path.join(base, src.lstrip("./"))
+        safe = sanitize_path(src.lstrip("./"))
+        path = os.path.join(base, safe)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8", errors="ignore") as f:
             f.write(content)
@@ -149,6 +177,89 @@ def extract_js(html, base_url):
 
     return js
 
+def extract_css(html, base_url):
+    css = set()
+    soup = BeautifulSoup(html, "html.parser")
+
+    for l in soup.find_all("link", rel=True):
+        rel = " ".join(l.get("rel", [])).lower()
+        if "stylesheet" in rel and l.get("href"):
+            css.add(urljoin(base_url, l["href"]))
+
+    for m in CSS_REGEX.findall(html):
+        css.add(urljoin(base_url, m))
+
+    for c in css:
+        print(f"[!] CSS file found: {c}")
+
+    return css
+
+# ================= SOURCE MAP DISCOVERY =================
+
+def handle_map_url(session, map_url, host, rate, dump, label="TRY"):
+    print(f"{GRAY}    [{label}]{RESET} {map_url}")
+
+    map_resp = fetch(session, map_url, FETCH_TIMEOUT, rate)
+    if not map_resp:
+        print(f"{RED}    [FAIL]{RESET} {map_url}")
+        return
+
+    if valid_sourcemap(map_resp):
+        print(f"{GREEN}    [FOUND]{RESET} Sourcemap -> {map_url}")
+        log_sourcemap(map_url)
+        if dump:
+            dump_sources(map_resp, map_url, host)
+    else:
+        print(f"{RED}    [INVALID]{RESET} Not a sourcemap")
+
+def process_asset_sourcemaps(session, asset_url, host, rate, dump):
+    tried_maps = set()
+
+    def try_map(map_url, label):
+        if map_url in tried_maps:
+            return
+        tried_maps.add(map_url)
+        handle_map_url(session, map_url, host, rate, dump, label=label)
+
+    asset_resp = fetch(session, asset_url, FETCH_TIMEOUT, rate)
+
+    # (1) Header + comment based (only if asset fetched)
+    if asset_resp:
+        for h in ("SourceMap", "X-SourceMap"):
+            if h in asset_resp.headers:
+                hdr_map = urljoin(asset_url, asset_resp.headers[h])
+                print(f"{GRAY}    [HEADER]{RESET} {h}: {hdr_map}")
+                try_map(hdr_map, "TRY")
+
+        for line in asset_resp.text.splitlines()[-10:]:
+            m = SOURCEMAP_COMMENT_RE.search(line)
+            if not m:
+                continue
+
+            val = m.group(1).strip().strip('"').strip("'")
+
+            inline = INLINE_MAP_RE.search(val)
+            if inline:
+                try:
+                    raw = base64.b64decode(inline.group(1))
+                    data = json.loads(raw)
+                    if valid_sourcemap_data(data):
+                        print(f"{GREEN}    [FOUND]{RESET} Inline sourcemap in {asset_url}")
+                        if dump:
+                            inline_id = f"inline_{sanitize_path(urlparse(asset_url).path).replace('/', '_') or 'asset'}"
+                            dump_sources_data(data, inline_id, host)
+                except Exception:
+                    print(f"{RED}    [INVALID]{RESET} Inline sourcemap decode failed")
+            else:
+                sm_url = urljoin(asset_url, val)
+                try_map(sm_url, "TRY")
+
+            break  # only first sourceMappingURL
+
+    # (2) LEGACY fallback — always attempted, but de-duplicated
+    legacy_map = asset_url + ".map"
+    try_map(legacy_map, "LEGACY")
+
 # ================= URL NORMALIZATION =================
 
 def normalize_target(session, raw, rate, use_extra_ports):
@@ -161,6 +272,7 @@ def normalize_target(session, raw, rate, use_extra_ports):
 
     for scheme, ports in DEFAULT_PORTS.items():
         for port in ports:
+            # Keep original behavior (no explicit :80/:443), but probe reachability
             url = f"{scheme}://{host}{path}"
             if fetch(session, url, PROBE_TIMEOUT, rate):
                 return url
@@ -191,10 +303,13 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    targets = [args.url] if args.url else [l.strip() for l in open(args.list)]
+    targets = [args.url] if args.url else [l.strip() for l in open(args.list, encoding="utf-8", errors="ignore")]
     session = requests.Session()
 
     for i, raw in enumerate(targets, 1):
+        if not raw:
+            continue
+
         print("\n" + "=" * 60)
         print(f"[URL: {i}/{len(targets)}] {raw}")
         print("=" * 60)
@@ -210,26 +325,25 @@ def main():
             continue
 
         js_files = extract_js(resp.text, target)
+        css_files = extract_css(resp.text, target)
 
+        # JS processing (keeps original behavior & adds advanced discovery)
         for js in js_files:
             if not in_scope(js, base_host):
                 print(f"{GRAY}[SKIP]{RESET} Out-of-scope JS: {js}")
                 continue
 
-            print(f"[JS] {js}")
-            map_url = js + ".map"
+            print(f"[Probing JS] {js}")
+            process_asset_sourcemaps(session, js, base_host, args.rate_limit, args.dump_sources)
 
-            map_resp = fetch(session, map_url, FETCH_TIMEOUT, args.rate_limit)
-            if not map_resp:
+        # CSS processing (new)
+        for css in css_files:
+            if not in_scope(css, base_host):
+                print(f"{GRAY}[SKIP]{RESET} Out-of-scope CSS: {css}")
                 continue
 
-            if valid_sourcemap(map_resp):
-                print(f"{GREEN}    [FOUND]{RESET} Sourcemap -> {map_url}")
-                log_sourcemap(map_url)
-                if args.dump_sources:
-                    dump_sources(map_resp, map_url, base_host)
-            else:
-                print(f"{RED}    [INVALID]{RESET} Not a sourcemap")
+            print(f"[CSS] {css}")
+            process_asset_sourcemaps(session, css, base_host, args.rate_limit, args.dump_sources)
 
     print(f"\n{GREEN}[+] Scan completed{RESET}")
     print(f"{GREEN}[+] Sourcemaps logged to {SOURCEMAP_LOG}{RESET}")
