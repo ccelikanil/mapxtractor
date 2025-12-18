@@ -174,3 +174,14 @@ This tool is intended for **authorized security testing and educational purposes
 
 The author is **not responsible for misuse** or any damage caused by this tool.  
 Always obtain proper authorization before testing any system.
+
+## ⭐ Contributing
+
+Pull requests and improvements are welcome. Feel free to open an issue for bugs, ideas, or feature requests.
+
+Before submitting a pull request:
+- Ensure your code follows the existing style
+- Keep changes focused and well-documented
+- Test your changes against real targets (with authorization)
+
+All contributions that improve stability, performance, or detection logic are appreciated.
