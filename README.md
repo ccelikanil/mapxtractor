@@ -200,6 +200,27 @@ After running **mapxtractor** with source dumping enabled:
 
 ```
 # python3 secretscanner.py sourcemaps/
+
+                                    __                                                   
+  ______ ____   ___________   _____/  |_  ______ ____ _____    ____   ____   ___________ 
+ /  ___// __ \_/ ___\_  __ \_/ __ \   __\/  ___// ___\\__  \  /    \ /    \_/ __ \_  __ \
+ \___ \\  ___/\  \___|  | \/\  ___/|  |  \___ \\  \___ / __ \|   |  \   |  \  ___/|  | \/
+/____  >\___  >\___  >__|    \___  >__| /____  >\___  >____  /___|  /___|  /\___  >__|   
+     \/     \/     \/            \/          \/     \/     \/     \/     \/     \/       
+
+         # secretscanner - secret scanning & extraction utility for mapxtractor #
+
+[+] Scanning secrets, internal IPs & endpoints under: sourcemap_finding/sourcemaps
+
+[FOUND] Internal Service URL
+  File : sourcemaps/example.com/src/config/env.ts
+  Line : 22
+  Code : const API_URL = "http://internal-api.corp:8080/v1/users";
+
+...
+------------------------------------------------------------
+[+] Scan completed
+[+] Results written to secrets_found.txt
 ```
 
 ## 📜 Disclaimer
