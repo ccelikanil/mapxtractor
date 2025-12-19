@@ -2,6 +2,8 @@
 
 **mapxtractor** is a lightweight offensive recon tool designed to **discover exposed JavaScript SourceMaps (`.js.map`)** on web applications and optionally **extract original source code** embedded inside them.
 
+*Please also see **secretscanner** in below.*
+
 Exposed SourceMaps can unintentionally reveal:
 - Original (unminified) source code
 - Internal API endpoints
