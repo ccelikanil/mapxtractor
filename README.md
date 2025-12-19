@@ -168,6 +168,38 @@ export const FEATURE_FLAGS = {
 - This tool **does not bypass authentication or authorization**.
 - It only accesses publicly reachable resources.
 
+# 🔐 secretscanner (mapxtractor companion)
+
+**secretscanner** is a post-processing utility designed to work alongside **mapxtractor**. It recursively scans extracted SourceMap contents to identify **hardcoded secrets, internal infrastructure references, and hidden API endpoints**. This tool helps transform leaked frontend source code into **actionable reconnaissance findings**.
+
+## ✨ Features
+
+- 🔎 Recursive scanning of extracted SourceMap directories
+- 🔐 Detection of common secrets:
+  - AWS Access & Secret Keys
+  - GitHub / Slack / Google API tokens
+  - OAuth client secrets
+  - JWT & Bearer tokens
+- 🌐 Discovery of internal infrastructure:
+  - Private IP addresses (10.x, 172.16–31.x, 192.168.x)
+  - Localhost & internal service URLs
+  - Internal API and service endpoints
+- 📍 Precise findings:
+  - File path
+  - Line number
+  - Code context
+- 🟢 Colorized terminal output for confirmed findings
+- 🧾 Automatic TXT report generation
+- 🚫 Minified-code protection to reduce false positives
+
+## 🚀 Usage
+
+After running **mapxtractor** with source dumping enabled:
+
+```
+# python3 secretscanner.py sourcemaps/
+```
+
 ## 📜 Disclaimer
 
 This tool is intended for **authorized security testing and educational purposes only**.
