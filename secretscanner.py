@@ -7,7 +7,7 @@ from datetime import datetime
 
 def print_banner():
     banner = r"""
-                                        __                                                   
+                                    __                                                   
   ______ ____   ___________   _____/  |_  ______ ____ _____    ____   ____   ___________ 
  /  ___// __ \_/ ___\_  __ \_/ __ \   __\/  ___// ___\\__  \  /    \ /    \_/ __ \_  __ \
  \___ \\  ___/\  \___|  | \/\  ___/|  |  \___ \\  \___ / __ \|   |  \   |  \  ___/|  | \/
@@ -18,20 +18,26 @@ def print_banner():
 """
     print(banner)
     time.sleep(1.5)
-    
+
 # ================= COLORS =================
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
 # ================= CONFIG =================
-
 OUTPUT_FILE = "secrets_found.txt"
-MAX_LINE_LENGTH = 500   # Skip long/minified lines to avoid false positives
+MAX_LINE_LENGTH = 500
+
+# ================= DEDUP =================
+SEEN_RESULTS = set()
+
+# ================= REGEX PRIORITY =================
+# Eğer üstteki yakalanırsa alttakiler bastırılır
+SUPPRESSION_RULES = {
+    "Localhost URL": ["Internal Service URL"],
+}
 
 # ================= PATTERNS =================
-
 PATTERNS = {
-    # ---------- Secrets ----------
     "AWS Access Key": re.compile(r"AKIA[0-9A-Z]{16}"),
 
     "AWS Secret Key": re.compile(
@@ -68,7 +74,17 @@ PATTERNS = {
         r"AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}"
     ),
 
-    # ---------- Internal IPs ----------
+    "Hardcoded Credentials (IF)": re.compile(
+        r'(?i)if\s*\(\s*'
+        r'(?:username|user|login|email)\s*==\s*["\']([^"\']{1,50})["\']\s*'
+        r'&&\s*'
+        r'(?:password|pass|pwd)\s*==\s*["\']([^"\']{1,50})["\']'
+    ),
+
+    "Hardcoded JS Token": re.compile(
+        r'(?i)(token|auth|apikey|api_key)\s*[:=]\s*["\']([A-Za-z0-9_\-]{16,})["\']'
+    ),
+
     "Internal IP": re.compile(
         r"\b("
         r"10\.(?:\d{1,3}\.){2}\d{1,3}|"
@@ -77,7 +93,6 @@ PATTERNS = {
         r")\b"
     ),
 
-    # ---------- Internal / Local URLs ----------
     "Localhost URL": re.compile(
         r"http[s]?://(?:localhost|127\.0\.0\.1)(?::\d+)?[^\s\"']*"
     ),
@@ -91,14 +106,12 @@ PATTERNS = {
         r"[^\s\"']*"
     ),
 
-    # ---------- Internal API / Endpoint Paths ----------
     "Internal API Endpoint": re.compile(
         r"(?i)(/api/v\d+/[a-z0-9_\-/]+|/internal/[a-z0-9_\-/]+)"
     ),
 }
 
 # ================= UTILS =================
-
 def write_output(text):
     with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
         f.write(text + "\n")
@@ -108,30 +121,46 @@ def scan_file(path):
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             for lineno, line in enumerate(f, 1):
-                # Skip long/minified lines
                 if len(line) > MAX_LINE_LENGTH:
                     continue
 
+                clean_line = line.strip()
+                matched_types = set()
+
                 for name, pattern in PATTERNS.items():
-                    for match in pattern.findall(line):
-                        value = match if isinstance(match, str) else match[0]
+                    # Suppression kontrolü
+                    suppressed = False
+                    for parent, children in SUPPRESSION_RULES.items():
+                        if parent in matched_types and name in children:
+                            suppressed = True
+                            break
+                    if suppressed:
+                        continue
+
+                    if pattern.search(clean_line):
+                        fingerprint = (name, path, lineno, clean_line)
+                        if fingerprint in SEEN_RESULTS:
+                            continue
+
+                        SEEN_RESULTS.add(fingerprint)
+                        matched_types.add(name)
+
                         results.append({
                             "type": name,
                             "file": path,
                             "line": lineno,
-                            "value": value,
-                            "content": line.strip()
+                            "content": clean_line
                         })
     except Exception:
         pass
+
     return results
 
 def scan_directory(root):
     for dirpath, _, filenames in os.walk(root):
         for filename in filenames:
             full_path = os.path.join(dirpath, filename)
-            findings = scan_file(full_path)
-            for f in findings:
+            for f in scan_file(full_path):
                 output = (
                     f"{GREEN}[FOUND]{RESET} {f['type']}\n"
                     f"  File : {f['file']}\n"
@@ -143,20 +172,16 @@ def scan_directory(root):
                 write_output(output)
 
 # ================= MAIN =================
-
 def main():
-       
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <sourcemaps_directory>")
         sys.exit(1)
 
     root = sys.argv[1]
-
     if not os.path.isdir(root):
         print("[-] Invalid directory")
         sys.exit(1)
 
-    # Init output file
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("# Secret & Internal Recon Scan Results\n")
         f.write(f"# Scan Time: {datetime.now()}\n")
@@ -165,7 +190,7 @@ def main():
     print_banner()
     print(f"[+] Scanning secrets, internal IPs & endpoints under: {root}\n")
     scan_directory(root)
-    print(f"[+] Scan completed")
+    print("[+] Scan completed")
     print(f"[+] Results written to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
