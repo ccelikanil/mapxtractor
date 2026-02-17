@@ -158,6 +158,21 @@ def dump_sources_data(data, map_id, host):
         with open(path, "w", encoding="utf-8", errors="ignore") as f:
             f.write(content)
         print(f"{GREEN}    [DUMP]{RESET} {path}")
+        
+def dump_javascript(resp, js_url, host):
+    try:
+        content = resp.text
+        path_parts = urlparse(js_url)
+        filename = os.path.basename(path_parts.path).split("?")[0]  # query parametreyi temizle
+        base = os.path.join("javascript", host)
+        os.makedirs(base, exist_ok=True)
+        full_path = os.path.join(base, filename)
+        with open(full_path, "w", encoding="utf-8", errors="ignore") as f:
+            f.write(content)
+        print(f"{GREEN}    [JS SAVED]{RESET} {full_path}")
+    except Exception as e:
+        print(f"{RED}    [ERROR]{RESET} Failed to save JS: {e}")
+
 
 # ================= EXTRACTION =================
 
@@ -297,6 +312,9 @@ def main():
     parser.add_argument("--rate-limit", type=float, help="Seconds between requests")
     parser.add_argument("--extra-ports", action="store_true", help="Scan common non-80/443 ports")
     parser.add_argument("--dump-sources", action="store_true", help="Dump embedded sourcesContent")
+    parser.add_argument("--javascript", action="store_true", help="Download JS files and save them locally")
+    parser.add_argument("--timeout", type=float, default=15, help="Request timeout in seconds (default: 15)")
+
 
     args = parser.parse_args()
     if not args.url and not args.list:
@@ -326,6 +344,22 @@ def main():
 
         js_files = extract_js(resp.text, target)
         css_files = extract_css(resp.text, target)
+        
+        for js in js_files:
+            js_clean = js.split("?")[0]  # Query parametrelerini temizle
+
+        if not in_scope(js_clean, base_host):
+            print(f"{GRAY}[SKIP]{RESET} Out-of-scope JS: {js}")
+            continue
+
+        print(f"[Probing JS] {js_clean}")
+        process_asset_sourcemaps(session, js_clean, base_host, args.rate_limit, args.dump_sources)
+
+        if args.javascript:
+            js_resp = fetch(session, js_clean, FETCH_TIMEOUT, args.rate_limit)
+            if js_resp:
+                dump_javascript(js_resp, js_clean, base_host)
+
 
         # JS processing (keeps original behavior & adds advanced discovery)
         for js in js_files:
