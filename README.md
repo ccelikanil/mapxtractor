@@ -49,6 +49,11 @@ Dump embedded source code from SourceMaps
 # python3 mapxtractor.py example.com --dump-sources
 ```
 
+Dump Javascript files
+```
+# python3 mapxtractor.py example.com --javascript
+```
+
 Enable rate limiting (seconds between requests)
 ```
 # python3 mapxtractor.py example.com --rate-limit <SECONDS>
